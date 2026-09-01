@@ -1,0 +1,1097 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeControlMode {
+    Bezier,
+    Elastic,
+    Bounce,
+}
+
+#[derive(Debug, Clone)]
+pub struct TimeControl {
+    pub points: Vec<TimeControlPoint>,
+    pub segments: Vec<TimeControlSegment>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TimeControlPoint {
+    pub position: [f64; 2],
+    pub handles_separated: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum TimeControlSegment {
+    Bezier(TimeControlBezier),
+    Elastic(TimeControlElastic),
+    Bounce(TimeControlBounce),
+}
+
+#[derive(Debug, Clone)]
+pub struct TimeControlBezier {
+    pub start_handle: [f64; 2],
+    pub end_handle: [f64; 2],
+}
+
+#[derive(Debug, Clone)]
+pub struct TimeControlElastic {
+    pub reversed: bool,
+    pub amplitude: f64,
+    pub frequency: f64,
+    pub decay: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct TimeControlBounce {
+    pub reversed: bool,
+    pub vertex: [f64; 2],
+}
+
+impl Default for TimeControl {
+    fn default() -> Self {
+        Self::from_cubic_bezier([1.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0])
+    }
+}
+
+impl Default for TimeControlElastic {
+    fn default() -> Self {
+        Self {
+            reversed: false,
+            amplitude: Self::default_amplitude(),
+            frequency: Self::default_frequency(),
+            decay: Self::default_decay(),
+        }
+    }
+}
+
+impl Default for TimeControlBounce {
+    fn default() -> Self {
+        Self {
+            reversed: false,
+            vertex: [0.55, 0.75],
+        }
+    }
+}
+
+impl TimeControlBezier {
+    fn linear(start: [f64; 2], end: [f64; 2]) -> Self {
+        Self {
+            start_handle: [
+                start[0] + (end[0] - start[0]) / 3.0,
+                start[1] + (end[1] - start[1]) / 3.0,
+            ],
+            end_handle: [
+                end[0] - (end[0] - start[0]) / 3.0,
+                end[1] - (end[1] - start[1]) / 3.0,
+            ],
+        }
+    }
+}
+
+impl TimeControl {
+    pub fn default_for_mode(mode: TimeControlMode) -> Self {
+        let mut timecontrol = Self::default();
+        timecontrol.set_segment_mode(0, mode);
+        timecontrol
+    }
+
+    pub fn mode(&self) -> TimeControlMode {
+        self.segment_mode(0)
+            .expect("時間制御には少なくとも1区間存在する")
+    }
+
+    pub fn y_at_x(&self, x: f64) -> f64 {
+        let x = x.clamp(0.0, 1.0);
+        self.curve_y_at_x(x)
+    }
+
+    pub fn curve_y_at_x(&self, x: f64) -> f64 {
+        let x = x.clamp(0.0, 1.0);
+        let segment_index = self.segment_index_at_x(x);
+        self.segment_y_at_x(segment_index, x)
+    }
+
+    pub fn curve_sampled_points(&self, steps: usize) -> Vec<[f64; 2]> {
+        let steps = steps.max(1);
+        let mut points = Vec::new();
+        for segment_index in 0..self.segments.len() {
+            if points.is_empty() {
+                points.push(self.points[segment_index].position);
+            }
+            for i in 1..=steps {
+                let t = i as f64 / steps as f64;
+                points.push(self.segment_point_at(segment_index, t));
+            }
+        }
+        points
+    }
+
+    pub fn point_at(&self, t: f64) -> [f64; 2] {
+        self.y_point_at_x(t)
+    }
+
+    pub fn y_point_at_x(&self, x: f64) -> [f64; 2] {
+        let x = x.clamp(0.0, 1.0);
+        [x, self.y_at_x(x)]
+    }
+
+    pub fn sampled_points(&self, steps: usize) -> Vec<[f64; 2]> {
+        let steps = steps.max(1);
+        (0..=steps)
+            .map(|i| {
+                let x = i as f64 / steps as f64;
+                [x, self.y_at_x(x)]
+            })
+            .collect()
+    }
+
+    pub fn editable_vertex(&self) -> Option<[f64; 2]> {
+        self.segment_vertex(0)
+    }
+
+    pub fn set_editable_vertex(&mut self, vertex: [f64; 2]) {
+        self.set_segment_vertex(0, vertex);
+    }
+
+    pub fn from_cubic_bezier(cubic_bezier: [f64; 4]) -> Self {
+        Self {
+            points: vec![
+                TimeControlPoint {
+                    position: [0.0, 0.0],
+                    handles_separated: false,
+                },
+                TimeControlPoint {
+                    position: [1.0, 1.0],
+                    handles_separated: false,
+                },
+            ],
+            segments: vec![TimeControlSegment::Bezier(TimeControlBezier {
+                start_handle: [cubic_bezier[0], cubic_bezier[1]],
+                end_handle: [cubic_bezier[2], cubic_bezier[3]],
+            })],
+        }
+    }
+
+    pub fn segment_mode(&self, segment_index: usize) -> Option<TimeControlMode> {
+        self.segments
+            .get(segment_index)
+            .map(TimeControlSegment::mode)
+    }
+
+    pub fn segment_bezier(&self, segment_index: usize) -> Option<&TimeControlBezier> {
+        match self.segments.get(segment_index) {
+            Some(TimeControlSegment::Bezier(bezier)) => Some(bezier),
+            _ => None,
+        }
+    }
+
+    pub fn segment_bezier_mut(&mut self, segment_index: usize) -> Option<&mut TimeControlBezier> {
+        match self.segments.get_mut(segment_index) {
+            Some(TimeControlSegment::Bezier(bezier)) => Some(bezier),
+            _ => None,
+        }
+    }
+
+    pub fn in_handle(&self, point_index: usize) -> Option<[f64; 2]> {
+        let segment_index = point_index.checked_sub(1)?;
+        self.segment_bezier(segment_index)
+            .map(|bezier| bezier.end_handle)
+    }
+
+    pub fn out_handle(&self, point_index: usize) -> Option<[f64; 2]> {
+        self.segment_bezier(point_index)
+            .map(|bezier| bezier.start_handle)
+    }
+
+    pub fn in_handle_mut(&mut self, point_index: usize) -> Option<&mut [f64; 2]> {
+        let segment_index = point_index.checked_sub(1)?;
+        self.segment_bezier_mut(segment_index)
+            .map(|bezier| &mut bezier.end_handle)
+    }
+
+    pub fn out_handle_mut(&mut self, point_index: usize) -> Option<&mut [f64; 2]> {
+        self.segment_bezier_mut(point_index)
+            .map(|bezier| &mut bezier.start_handle)
+    }
+
+    pub fn set_segment_mode(&mut self, segment_index: usize, mode: TimeControlMode) {
+        let start = self.points[segment_index].position;
+        let end = self.points[segment_index + 1].position;
+        self.segments[segment_index] = TimeControlSegment::default_for_mode(mode, start, end);
+    }
+
+    pub fn segment_vertex(&self, segment_index: usize) -> Option<[f64; 2]> {
+        match self.segments.get(segment_index) {
+            Some(TimeControlSegment::Bounce(bounce)) => {
+                let start = self.points[segment_index].position;
+                let end = self.points[segment_index + 1].position;
+                let vertex = if bounce.reversed {
+                    [1.0 - bounce.vertex[0], 1.0 - bounce.vertex[1]]
+                } else {
+                    bounce.vertex
+                };
+                Some([
+                    start[0] + (end[0] - start[0]) * vertex[0],
+                    start[1] + (end[1] - start[1]) * vertex[1],
+                ])
+            }
+            _ => None,
+        }
+    }
+
+    pub fn set_segment_vertex(&mut self, segment_index: usize, vertex: [f64; 2]) {
+        let start = self.points[segment_index].position;
+        let end = self.points[segment_index + 1].position;
+        let dx = end[0] - start[0];
+        let dy = end[1] - start[1];
+        let local_vertex = [
+            if dx.abs() < f64::EPSILON {
+                0.5
+            } else {
+                (vertex[0] - start[0]) / dx
+            },
+            if dy.abs() < f64::EPSILON {
+                1.0
+            } else {
+                (vertex[1] - start[1]) / dy
+            },
+        ];
+        if let Some(TimeControlSegment::Bounce(bounce)) = self.segments.get_mut(segment_index) {
+            let local_vertex = if bounce.reversed {
+                [1.0 - local_vertex[0], 1.0 - local_vertex[1]]
+            } else {
+                local_vertex
+            };
+            bounce.vertex = [
+                local_vertex[0].clamp(0.001, 0.999),
+                local_vertex[1].clamp(0.0, 1.0),
+            ];
+        }
+    }
+
+    pub fn segment_elastic(&self, segment_index: usize) -> Option<&TimeControlElastic> {
+        match self.segments.get(segment_index) {
+            Some(TimeControlSegment::Elastic(elastic)) => Some(elastic),
+            _ => None,
+        }
+    }
+
+    pub fn segment_elastic_mut(&mut self, segment_index: usize) -> Option<&mut TimeControlElastic> {
+        match self.segments.get_mut(segment_index) {
+            Some(TimeControlSegment::Elastic(elastic)) => Some(elastic),
+            _ => None,
+        }
+    }
+
+    pub fn segment_reversed(&self, segment_index: usize) -> Option<bool> {
+        match self.segments.get(segment_index) {
+            Some(TimeControlSegment::Elastic(elastic)) => Some(elastic.reversed),
+            Some(TimeControlSegment::Bounce(bounce)) => Some(bounce.reversed),
+            _ => None,
+        }
+    }
+
+    pub fn set_segment_reversed(&mut self, segment_index: usize, reversed: bool) {
+        match self.segments.get_mut(segment_index) {
+            Some(TimeControlSegment::Elastic(elastic)) => elastic.reversed = reversed,
+            Some(TimeControlSegment::Bounce(bounce)) => bounce.reversed = reversed,
+            _ => {}
+        }
+    }
+
+    fn segment_y_at_x(&self, segment_index: usize, x: f64) -> f64 {
+        let start = self.points[segment_index].position;
+        let end = self.points[segment_index + 1].position;
+        let local_x = Self::local_x(start, end, x);
+        match &self.segments[segment_index] {
+            TimeControlSegment::Bezier(_) => self.bezier_segment_y_at_x(segment_index, x),
+            TimeControlSegment::Elastic(elastic) => {
+                start[1] + (end[1] - start[1]) * elastic.eased_y_at_x(local_x)
+            }
+            TimeControlSegment::Bounce(bounce) => {
+                start[1] + (end[1] - start[1]) * bounce.eased_y_at_x(local_x)
+            }
+        }
+    }
+
+    fn bezier_segment_y_at_x(&self, segment_index: usize, x: f64) -> f64 {
+        let x = x.clamp(0.0, 1.0);
+        let mut min_t = 0.0;
+        let mut max_t = 1.0;
+
+        for _ in 0..32 {
+            let t = (min_t + max_t) / 2.0;
+            if self.segment_point_at(segment_index, t)[0] < x {
+                min_t = t;
+            } else {
+                max_t = t;
+            }
+        }
+
+        self.segment_point_at(segment_index, (min_t + max_t) / 2.0)[1]
+    }
+
+    pub fn segment_point_at(&self, segment_index: usize, t: f64) -> [f64; 2] {
+        match &self.segments[segment_index] {
+            TimeControlSegment::Elastic(elastic) => {
+                self.function_segment_point_at(segment_index, t, |local_x| {
+                    elastic.eased_y_at_x(local_x)
+                })
+            }
+            TimeControlSegment::Bounce(bounce) => {
+                self.function_segment_point_at(segment_index, t, |local_x| {
+                    bounce.eased_y_at_x(local_x)
+                })
+            }
+            TimeControlSegment::Bezier(_) => self.bezier_segment_point_at(segment_index, t),
+        }
+    }
+
+    fn bezier_segment_point_at(&self, segment_index: usize, t: f64) -> [f64; 2] {
+        let t = t.clamp(0.0, 1.0);
+        let mt = 1.0 - t;
+        let start = self.points[segment_index].position;
+        let end = self.points[segment_index + 1].position;
+        let Some(bezier) = self.segment_bezier(segment_index) else {
+            unreachable!("ベジェ区間の計算時にはベジェハンドルが存在する");
+        };
+        let p0 = start;
+        let p1 = bezier.start_handle;
+        let p2 = bezier.end_handle;
+        let p3 = end;
+
+        [
+            mt.powi(3) * p0[0]
+                + 3.0 * mt.powi(2) * t * p1[0]
+                + 3.0 * mt * t.powi(2) * p2[0]
+                + t.powi(3) * p3[0],
+            mt.powi(3) * p0[1]
+                + 3.0 * mt.powi(2) * t * p1[1]
+                + 3.0 * mt * t.powi(2) * p2[1]
+                + t.powi(3) * p3[1],
+        ]
+    }
+
+    fn function_segment_point_at(
+        &self,
+        segment_index: usize,
+        t: f64,
+        y_at_x: impl Fn(f64) -> f64,
+    ) -> [f64; 2] {
+        let t = t.clamp(0.0, 1.0);
+        let start = self.points[segment_index].position;
+        let end = self.points[segment_index + 1].position;
+        [
+            start[0] + (end[0] - start[0]) * t,
+            start[1] + (end[1] - start[1]) * y_at_x(t),
+        ]
+    }
+
+    pub fn insert_midpoint(&mut self, after_index: usize) -> usize {
+        let after_index = after_index.min(self.segments.len() - 1);
+        let x =
+            (self.points[after_index].position[0] + self.points[after_index + 1].position[0]) / 2.0;
+        let y = self.y_at_x(x);
+        let prev = self.points[after_index].position;
+        let next = self.points[after_index + 1].position;
+        let handle_delta = [(next[0] - prev[0]) / 6.0, (next[1] - prev[1]) / 6.0];
+        let new_in_handle = [
+            (x - handle_delta[0]).clamp(0.0, 1.0),
+            (y - handle_delta[1]).clamp(0.0, 1.0),
+        ];
+        let new_out_handle = [
+            (x + handle_delta[0]).clamp(0.0, 1.0),
+            (y + handle_delta[1]).clamp(0.0, 1.0),
+        ];
+        let next_in_handle = self
+            .segment_bezier(after_index)
+            .map(|bezier| bezier.end_handle)
+            .unwrap_or([
+                (next[0] - handle_delta[0]).clamp(0.0, 1.0),
+                (next[1] - handle_delta[1]).clamp(0.0, 1.0),
+            ]);
+
+        if let Some(bezier) = self.segment_bezier_mut(after_index) {
+            bezier.end_handle = new_in_handle;
+        }
+        let new_index = after_index + 1;
+        self.points.insert(
+            new_index,
+            TimeControlPoint {
+                position: [x, y],
+                handles_separated: false,
+            },
+        );
+        self.segments.insert(
+            new_index,
+            TimeControlSegment::Bezier(TimeControlBezier {
+                start_handle: new_out_handle,
+                end_handle: next_in_handle,
+            }),
+        );
+        new_index
+    }
+
+    pub fn remove_midpoint(&mut self, index: usize) {
+        if index == 0 || index + 1 >= self.points.len() {
+            return;
+        }
+
+        let right_end_handle = self.segment_bezier(index).map(|bezier| bezier.end_handle);
+        self.points.remove(index);
+        self.segments.remove(index);
+
+        let previous_segment = index - 1;
+        let start = self.points[previous_segment].position;
+        let end = self.points[index].position;
+        if let Some(bezier) = self.segment_bezier_mut(previous_segment) {
+            bezier.end_handle = right_end_handle
+                .unwrap_or_else(|| TimeControlBezier::linear(start, end).end_handle);
+        }
+    }
+
+    fn segment_index_at_x(&self, x: f64) -> usize {
+        self.points
+            .windows(2)
+            .position(|points| x <= points[1].position[0])
+            .unwrap_or(self.segments.len() - 1)
+    }
+
+    fn local_x(start: [f64; 2], end: [f64; 2], x: f64) -> f64 {
+        let dx = end[0] - start[0];
+        if dx.abs() < f64::EPSILON {
+            0.0
+        } else {
+            ((x - start[0]) / dx).clamp(0.0, 1.0)
+        }
+    }
+}
+
+impl TimeControlSegment {
+    pub fn default_for_mode(mode: TimeControlMode, start: [f64; 2], end: [f64; 2]) -> Self {
+        match mode {
+            TimeControlMode::Bezier => Self::Bezier(TimeControlBezier::linear(start, end)),
+            TimeControlMode::Elastic => Self::Elastic(TimeControlElastic::default()),
+            TimeControlMode::Bounce => Self::Bounce(TimeControlBounce::default()),
+        }
+    }
+
+    pub fn mode(&self) -> TimeControlMode {
+        match self {
+            Self::Bezier(_) => TimeControlMode::Bezier,
+            Self::Elastic(_) => TimeControlMode::Elastic,
+            Self::Bounce(_) => TimeControlMode::Bounce,
+        }
+    }
+}
+
+impl TimeControlElastic {
+    fn default_amplitude() -> f64 {
+        1.0
+    }
+
+    fn default_frequency() -> f64 {
+        5.0
+    }
+
+    fn default_decay() -> f64 {
+        6.0
+    }
+
+    pub fn amp_handle(&self) -> [f64; 2] {
+        [0.0, 1.0 + self.amplitude.clamp(0.0, 1.0)]
+    }
+
+    pub fn freq_decay_handle(&self) -> [f64; 2] {
+        let frequency = self.frequency.max(0.5);
+        let decay = self.decay.max(1.0);
+        [
+            (0.5 / frequency).clamp(0.0001, 1.0),
+            (1.0 - (-(decay - 1.0) * 0.1).exp()).clamp(0.0, 0.9999),
+        ]
+    }
+
+    pub fn set_amp_handle_y(&mut self, y: f64) {
+        self.amplitude = (y - 1.0).clamp(0.0, 1.0);
+    }
+
+    pub fn set_freq_decay_handle(&mut self, point: [f64; 2]) {
+        let x = point[0].clamp(0.0001, 1.0);
+        let y = point[1].clamp(0.0, 0.9999);
+        self.frequency = (0.5 / x).max(0.5);
+        self.decay = -10.0 * (1.0 - y).ln() + 1.0;
+    }
+
+    fn eased_y_at_x(&self, x: f64) -> f64 {
+        if self.reversed {
+            1.0 - self.y_at_x(1.0 - x)
+        } else {
+            self.y_at_x(x)
+        }
+    }
+
+    fn y_at_x(&self, x: f64) -> f64 {
+        // https://github.com/mimaraka/aviutl-plugin-curve_editor/blob/main/curve_editor/curve_elastic.cpp
+        let progress = x.clamp(0.0, 1.0);
+        let amplitude = self.amplitude.clamp(0.0, 1.0);
+        let frequency = self.frequency.max(0.5);
+        let decay = self.decay.max(1.0);
+        let omega = 2.0 * std::f64::consts::PI * frequency;
+        let exp_k = (-decay).exp();
+
+        let func_elastic = |progress: f64| {
+            let coef = if decay == 0.0 {
+                1.0 - progress
+            } else {
+                (exp_k.powf(progress) - exp_k) / (1.0 - exp_k)
+            };
+            1.0 - coef * (omega * progress).cos()
+        };
+        let func_elastic_derivative = |progress: f64| {
+            let angle = omega * progress;
+            let value_cos = angle.cos();
+            let value_sin = angle.sin();
+            if decay == 0.0 {
+                value_cos + omega * (1.0 - progress) * value_sin
+            } else {
+                let exp_kt = exp_k.powf(progress);
+                decay * exp_kt * value_cos + omega * (exp_kt - exp_k) * value_sin
+            }
+        };
+        let func_elastic_derivative_2 = |progress: f64| {
+            let angle = omega * progress;
+            let value_cos = angle.cos();
+            let value_sin = angle.sin();
+            if decay == 0.0 {
+                omega * omega * (1.0 - progress) * value_cos - 2.0 * omega * value_sin
+            } else {
+                let exp_kt = exp_k.powf(progress);
+                let omega_sq = omega * omega;
+                ((omega_sq - decay * decay) * exp_kt - omega_sq * exp_k) * value_cos
+                    - 2.0 * omega * decay * exp_kt * value_sin
+            }
+        };
+
+        let mut extremum_t = (0.5 - (decay / frequency).sqrt() * 0.05) / frequency;
+        for _ in 0..3 {
+            extremum_t -=
+                func_elastic_derivative(extremum_t) / func_elastic_derivative_2(extremum_t);
+        }
+        let extremum_x = func_elastic(extremum_t);
+        let value = func_elastic(progress);
+        let ret = if progress < extremum_t {
+            (amplitude * (extremum_x - 1.0) + 1.0) / extremum_x * value
+        } else {
+            amplitude * (value - 1.0) + 1.0
+        };
+
+        ret.clamp(0.0, 2.0)
+    }
+}
+
+impl TimeControlBounce {
+    fn eased_y_at_x(&self, x: f64) -> f64 {
+        if self.reversed {
+            1.0 - self.y_at_x(1.0 - x)
+        } else {
+            self.y_at_x(x)
+        }
+    }
+
+    fn y_at_x(&self, x: f64) -> f64 {
+        // https://github.com/mimaraka/aviutl-plugin-curve_editor/blob/main/curve_editor/curve_bounce.cpp
+        let progress = x.clamp(0.0, 1.0);
+        let handle_x = self.vertex[0].clamp(0.001, 0.999);
+        let handle_y = self.vertex[1].clamp(0.001, 1.0);
+        let cor = (1.0 - handle_y).sqrt().clamp(0.001, 0.999);
+        let period = 2.0 * handle_x / (cor + 1.0);
+        let limit_value = period * (1.0 / (1.0 - cor) - 0.5);
+
+        let active = if limit_value > 1.0 {
+            let n = ((1.0 + (cor - 1.0) * (1.0 / period + 0.5)).ln() / cor.ln()).floor();
+            progress < period * ((cor.powf(n) - 1.0) / (cor - 1.0) - 0.5)
+        } else {
+            progress < limit_value
+        };
+        if !active {
+            return 1.0;
+        }
+
+        let progress = progress / period;
+        let bounce_index = |progress: f64| (((cor - 1.0) * progress + 1.0).ln() / cor.ln()).floor();
+        let bounce_offset = |progress: f64| {
+            progress + 0.5 + 1.0 / (cor - 1.0)
+                - (cor + 1.0) * cor.powf(bounce_index(progress + 0.5)) / (2.0 * cor - 2.0)
+        };
+        let offset = bounce_offset(progress);
+        let ret = 4.0 * offset * offset - cor.powf(2.0 * bounce_index(progress + 0.5));
+
+        (1.0 + ret).clamp(0.0, 1.0)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TimeControlPreset {
+    pub name: &'static str,
+    pub timecontrol: TimeControl,
+}
+
+pub fn timecontrol_presets() -> Vec<TimeControlPreset> {
+    #[derive(Clone, Copy)]
+    enum PresetShape {
+        Normal,
+        Reverse,
+        NormalReverse,
+        ReverseNormal,
+    }
+
+    fn reverse_cubic_bezier(cubic_bezier: [f64; 4]) -> [f64; 4] {
+        [
+            1.0 - cubic_bezier[2],
+            1.0 - cubic_bezier[3],
+            1.0 - cubic_bezier[0],
+            1.0 - cubic_bezier[1],
+        ]
+    }
+
+    fn scaled_cubic_handles(
+        cubic_bezier: [f64; 4],
+        start: [f64; 2],
+        end: [f64; 2],
+    ) -> ([f64; 2], [f64; 2]) {
+        let dx = end[0] - start[0];
+        let dy = end[1] - start[1];
+        (
+            [
+                start[0] + dx * cubic_bezier[0],
+                start[1] + dy * cubic_bezier[1],
+            ],
+            [
+                start[0] + dx * cubic_bezier[2],
+                start[1] + dy * cubic_bezier[3],
+            ],
+        )
+    }
+
+    fn split_bezier(cubic_bezier: [f64; 4], first_reversed: bool) -> TimeControl {
+        let first_cubic = if first_reversed {
+            reverse_cubic_bezier(cubic_bezier)
+        } else {
+            cubic_bezier
+        };
+        let second_cubic = if first_reversed {
+            cubic_bezier
+        } else {
+            reverse_cubic_bezier(cubic_bezier)
+        };
+        let (first_out, first_in) = scaled_cubic_handles(first_cubic, [0.0, 0.0], [0.5, 0.5]);
+        let (second_out, second_in) = scaled_cubic_handles(second_cubic, [0.5, 0.5], [1.0, 1.0]);
+
+        TimeControl {
+            points: vec![
+                TimeControlPoint {
+                    position: [0.0, 0.0],
+                    handles_separated: false,
+                },
+                TimeControlPoint {
+                    position: [0.5, 0.5],
+                    handles_separated: false,
+                },
+                TimeControlPoint {
+                    position: [1.0, 1.0],
+                    handles_separated: false,
+                },
+            ],
+            segments: vec![
+                TimeControlSegment::Bezier(TimeControlBezier {
+                    start_handle: first_out,
+                    end_handle: first_in,
+                }),
+                TimeControlSegment::Bezier(TimeControlBezier {
+                    start_handle: second_out,
+                    end_handle: second_in,
+                }),
+            ],
+        }
+    }
+
+    fn bezier(name: &'static str, shape: PresetShape, cubic_bezier: [f64; 4]) -> TimeControlPreset {
+        let timecontrol = match shape {
+            PresetShape::Normal => TimeControl::from_cubic_bezier(cubic_bezier),
+            PresetShape::Reverse => {
+                TimeControl::from_cubic_bezier(reverse_cubic_bezier(cubic_bezier))
+            }
+            PresetShape::NormalReverse => split_bezier(cubic_bezier, false),
+            PresetShape::ReverseNormal => split_bezier(cubic_bezier, true),
+        };
+        TimeControlPreset { name, timecontrol }
+    }
+
+    fn function_segment(mode: TimeControlMode, reversed: bool) -> TimeControlSegment {
+        let mut segment = TimeControlSegment::default_for_mode(mode, [0.0, 0.0], [1.0, 1.0]);
+        match &mut segment {
+            TimeControlSegment::Elastic(elastic) => elastic.reversed = reversed,
+            TimeControlSegment::Bounce(bounce) => bounce.reversed = reversed,
+            TimeControlSegment::Bezier(_) => {}
+        }
+        segment
+    }
+
+    fn function_timecontrol(mode: TimeControlMode, shape: PresetShape) -> TimeControl {
+        match shape {
+            PresetShape::Normal | PresetShape::Reverse => {
+                let mut timecontrol = TimeControl::default();
+                timecontrol.segments[0] =
+                    function_segment(mode, matches!(shape, PresetShape::Reverse));
+                timecontrol
+            }
+            PresetShape::NormalReverse | PresetShape::ReverseNormal => {
+                let first_reversed = matches!(shape, PresetShape::ReverseNormal);
+                TimeControl {
+                    points: vec![
+                        TimeControlPoint {
+                            position: [0.0, 0.0],
+                            handles_separated: false,
+                        },
+                        TimeControlPoint {
+                            position: [0.5, 0.5],
+                            handles_separated: false,
+                        },
+                        TimeControlPoint {
+                            position: [1.0, 1.0],
+                            handles_separated: false,
+                        },
+                    ],
+                    segments: vec![
+                        function_segment(mode, first_reversed),
+                        function_segment(mode, !first_reversed),
+                    ],
+                }
+            }
+        }
+    }
+
+    fn elastic(name: &'static str, shape: PresetShape) -> TimeControlPreset {
+        let timecontrol = function_timecontrol(TimeControlMode::Elastic, shape);
+        TimeControlPreset { name, timecontrol }
+    }
+
+    fn bounce(name: &'static str, shape: PresetShape) -> TimeControlPreset {
+        let timecontrol = function_timecontrol(TimeControlMode::Bounce, shape);
+        TimeControlPreset { name, timecontrol }
+    }
+
+    vec![
+        bezier("[1] linear", PresetShape::Normal, [0.25, 0.25, 0.75, 0.75]),
+        bezier(
+            "[2] easeInSine",
+            PresetShape::Normal,
+            [0.12, 0.0, 0.39, 0.0],
+        ),
+        bezier(
+            "[3] easeOutSine",
+            PresetShape::Reverse,
+            [0.12, 0.0, 0.39, 0.0],
+        ),
+        bezier(
+            "[4] easeInOutSine",
+            PresetShape::NormalReverse,
+            [0.12, 0.0, 0.39, 0.0],
+        ),
+        bezier(
+            "[5] easeOutInSine",
+            PresetShape::ReverseNormal,
+            [0.12, 0.0, 0.39, 0.0],
+        ),
+        bezier("[6] easeInQuad", PresetShape::Normal, [0.11, 0.0, 0.5, 0.0]),
+        bezier(
+            "[7] easeOutQuad",
+            PresetShape::Reverse,
+            [0.11, 0.0, 0.5, 0.0],
+        ),
+        bezier(
+            "[8] easeInOutQuad",
+            PresetShape::NormalReverse,
+            [0.11, 0.0, 0.5, 0.0],
+        ),
+        bezier(
+            "[9] easeOutInQuad",
+            PresetShape::ReverseNormal,
+            [0.11, 0.0, 0.5, 0.0],
+        ),
+        bezier(
+            "[10] easeInCubic",
+            PresetShape::Normal,
+            [0.32, 0.0, 0.67, 0.0],
+        ),
+        bezier(
+            "[11] easeOutCubic",
+            PresetShape::Reverse,
+            [0.32, 0.0, 0.67, 0.0],
+        ),
+        bezier(
+            "[12] easeInOutCubic",
+            PresetShape::NormalReverse,
+            [0.32, 0.0, 0.67, 0.0],
+        ),
+        bezier(
+            "[13] easeOutInCubic",
+            PresetShape::ReverseNormal,
+            [0.32, 0.0, 0.67, 0.0],
+        ),
+        bezier(
+            "[14] easeInQuart",
+            PresetShape::Normal,
+            [0.5, 0.0, 0.75, 0.0],
+        ),
+        bezier(
+            "[15] easeOutQuart",
+            PresetShape::Reverse,
+            [0.5, 0.0, 0.75, 0.0],
+        ),
+        bezier(
+            "[16] easeInOutQuart",
+            PresetShape::NormalReverse,
+            [0.5, 0.0, 0.75, 0.0],
+        ),
+        bezier(
+            "[17] easeOutInQuart",
+            PresetShape::ReverseNormal,
+            [0.5, 0.0, 0.75, 0.0],
+        ),
+        bezier(
+            "[18] easeInQuint",
+            PresetShape::Normal,
+            [0.64, 0.0, 0.78, 0.0],
+        ),
+        bezier(
+            "[19] easeOutQuint",
+            PresetShape::Reverse,
+            [0.64, 0.0, 0.78, 0.0],
+        ),
+        bezier(
+            "[20] easeInOutQuint",
+            PresetShape::NormalReverse,
+            [0.64, 0.0, 0.78, 0.0],
+        ),
+        bezier(
+            "[21] easeOutInQuint",
+            PresetShape::ReverseNormal,
+            [0.64, 0.0, 0.78, 0.0],
+        ),
+        bezier(
+            "[22] easeInExpo",
+            PresetShape::Normal,
+            [0.7, 0.0, 0.84, 0.0],
+        ),
+        bezier(
+            "[23] easeOutExpo",
+            PresetShape::Reverse,
+            [0.7, 0.0, 0.84, 0.0],
+        ),
+        bezier(
+            "[24] easeInOutExpo",
+            PresetShape::NormalReverse,
+            [0.7, 0.0, 0.84, 0.0],
+        ),
+        bezier(
+            "[25] easeOutInExpo",
+            PresetShape::ReverseNormal,
+            [0.7, 0.0, 0.84, 0.0],
+        ),
+        bezier(
+            "[26] easeInCirc",
+            PresetShape::Normal,
+            [0.55, 0.0, 1.0, 0.45],
+        ),
+        bezier(
+            "[27] easeOutCirc",
+            PresetShape::Reverse,
+            [0.55, 0.0, 1.0, 0.45],
+        ),
+        bezier(
+            "[28] easeInOutCirc",
+            PresetShape::NormalReverse,
+            [0.55, 0.0, 1.0, 0.45],
+        ),
+        bezier(
+            "[29] easeOutInCirc",
+            PresetShape::ReverseNormal,
+            [0.55, 0.0, 1.0, 0.45],
+        ),
+        elastic("[30] easeInElastic", PresetShape::Reverse),
+        elastic("[31] easeOutElastic", PresetShape::Normal),
+        elastic("[32] easeInOutElastic", PresetShape::ReverseNormal),
+        elastic("[33] easeOutInElastic", PresetShape::NormalReverse),
+        bezier(
+            "[34] easeInBack",
+            PresetShape::Normal,
+            [0.36, 0.0, 0.66, -0.56],
+        ),
+        bezier(
+            "[35] easeOutBack",
+            PresetShape::Reverse,
+            [0.36, 0.0, 0.66, -0.56],
+        ),
+        bezier(
+            "[36] easeInOutBack",
+            PresetShape::NormalReverse,
+            [0.36, 0.0, 0.66, -0.56],
+        ),
+        bezier(
+            "[37] easeOutInBack",
+            PresetShape::ReverseNormal,
+            [0.36, 0.0, 0.66, -0.56],
+        ),
+        bounce("[38] easeInBounce", PresetShape::Reverse),
+        bounce("[39] easeOutBounce", PresetShape::Normal),
+        bounce("[40] easeInOutBounce", PresetShape::ReverseNormal),
+        bounce("[41] easeOutInBounce", PresetShape::NormalReverse),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_timecontrol_bezier_maps_x_to_same_y() {
+        let timecontrol = TimeControl::default();
+
+        assert_eq!(timecontrol.points.len(), 2);
+        assert_eq!(timecontrol.segments.len(), 1);
+        let Some(bezier) = timecontrol.segment_bezier(0) else {
+            panic!("default segment must be bezier");
+        };
+        assert_eq!(timecontrol.out_handle(0), Some(bezier.start_handle));
+        assert_eq!(timecontrol.in_handle(1), Some(bezier.end_handle));
+
+        for x in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            assert!((timecontrol.y_at_x(x) - x).abs() < 0.000_001);
+        }
+    }
+
+    #[test]
+    fn inserting_and_removing_midpoint_keeps_segment_count_in_sync() {
+        let mut timecontrol = TimeControl::default();
+
+        let midpoint = timecontrol.insert_midpoint(0);
+        assert_eq!(midpoint, 1);
+        assert_eq!(timecontrol.points.len(), 3);
+        assert_eq!(timecontrol.segments.len(), 2);
+        assert!(timecontrol.segment_bezier(0).is_some());
+        assert!(timecontrol.segment_bezier(1).is_some());
+
+        timecontrol.remove_midpoint(midpoint);
+        assert_eq!(timecontrol.points.len(), 2);
+        assert_eq!(timecontrol.segments.len(), 1);
+        assert!(timecontrol.segment_bezier(0).is_some());
+    }
+
+    #[test]
+    fn elastic_timecontrol_starts_and_ends_at_anchors() {
+        let timecontrol = TimeControl::default_for_mode(TimeControlMode::Elastic);
+
+        assert!((timecontrol.y_at_x(0.0) - 0.0).abs() < 0.000_001);
+        assert!((timecontrol.y_at_x(1.0) - 1.0).abs() < 0.000_001);
+    }
+
+    #[test]
+    fn elastic_handles_update_parameters() {
+        let mut timecontrol = TimeControl::default_for_mode(TimeControlMode::Elastic);
+        let elastic = timecontrol
+            .segment_elastic_mut(0)
+            .expect("elastic segment must exist");
+
+        elastic.set_amp_handle_y(1.5);
+        elastic.set_freq_decay_handle([0.25, 0.5]);
+
+        assert!((elastic.amplitude - 0.5).abs() < 0.000_001);
+        assert!((elastic.frequency - 2.0).abs() < 0.000_001);
+        assert!((elastic.freq_decay_handle()[1] - 0.5).abs() < 0.000_001);
+    }
+
+    #[test]
+    fn bounce_timecontrol_starts_ends_and_passes_vertex() {
+        let timecontrol = TimeControl::default_for_mode(TimeControlMode::Bounce);
+        let vertex = timecontrol
+            .editable_vertex()
+            .expect("bounce vertex must exist");
+
+        assert!((timecontrol.y_at_x(0.0) - 0.0).abs() < 0.000_001);
+        assert!((timecontrol.y_at_x(1.0) - 1.0).abs() < 0.000_001);
+        assert!((timecontrol.y_at_x(vertex[0]) - vertex[1]).abs() < 0.000_001);
+    }
+
+    #[test]
+    fn mixed_timecontrol_segments_are_independent() {
+        let mut timecontrol = TimeControl::default();
+        timecontrol.insert_midpoint(0);
+        timecontrol.points[1].position = [0.5, 0.5];
+        timecontrol.set_segment_mode(0, TimeControlMode::Bounce);
+        timecontrol.set_segment_mode(1, TimeControlMode::Elastic);
+        timecontrol.set_segment_vertex(0, [0.25, 0.25]);
+        timecontrol
+            .segment_elastic_mut(1)
+            .expect("elastic segment must exist")
+            .set_amp_handle_y(1.5);
+
+        assert_eq!(timecontrol.segment_mode(0), Some(TimeControlMode::Bounce));
+        assert_eq!(timecontrol.segment_mode(1), Some(TimeControlMode::Elastic));
+        assert_eq!(
+            timecontrol
+                .editable_vertex()
+                .expect("bounce vertex must exist"),
+            [0.25, 0.25]
+        );
+        assert!((timecontrol.y_at_x(0.5) - 0.5).abs() < 0.000_001);
+        assert!(
+            (timecontrol
+                .segment_elastic(1)
+                .expect("elastic segment must exist")
+                .amplitude
+                - 0.5)
+                .abs()
+                < 0.000_001
+        );
+    }
+
+    #[test]
+    fn elastic_and_bounce_segments_can_be_reversed() {
+        let normal_elastic = TimeControl::default_for_mode(TimeControlMode::Elastic);
+        let mut reversed_elastic = normal_elastic.clone();
+        reversed_elastic.set_segment_reversed(0, true);
+        let normal_bounce = TimeControl::default_for_mode(TimeControlMode::Bounce);
+        let mut reversed_bounce = normal_bounce.clone();
+        reversed_bounce.set_segment_reversed(0, true);
+
+        for x in [0.125, 0.25, 0.75] {
+            assert!(
+                (reversed_elastic.y_at_x(x) - (1.0 - normal_elastic.y_at_x(1.0 - x))).abs()
+                    < 0.000_001
+            );
+            assert!(
+                (reversed_bounce.y_at_x(x) - (1.0 - normal_bounce.y_at_x(1.0 - x))).abs()
+                    < 0.000_001
+            );
+        }
+    }
+
+    #[test]
+    fn split_timecontrol_presets_pass_through_midpoint() {
+        let presets = timecontrol_presets();
+        for name in [
+            "[4] easeInOutSine",
+            "[5] easeOutInSine",
+            "[32] easeInOutElastic",
+            "[33] easeOutInElastic",
+            "[40] easeInOutBounce",
+            "[41] easeOutInBounce",
+        ] {
+            let preset = presets
+                .iter()
+                .find(|preset| preset.name == name)
+                .unwrap_or_else(|| panic!("preset not found: {name}"));
+            assert!((preset.timecontrol.y_at_x(0.0) - 0.0).abs() < 0.000_001);
+            assert!((preset.timecontrol.y_at_x(0.5) - 0.5).abs() < 0.000_001);
+            assert!((preset.timecontrol.y_at_x(1.0) - 1.0).abs() < 0.000_001);
+        }
+    }
+}
