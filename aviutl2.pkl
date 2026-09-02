@@ -31,10 +31,6 @@ artifacts {
       }
     }
   }
-  ["Default-anarchy_time_control_editor-aux2-aul2"] {
-    destination = "Language/Default.anarchy_time_control_editor-aux2.aul2"
-    source = "i18n/Default.aul2"
-  }
   ["English-anarchy_time_control_editor-aux2-aul2"] {
     destination = "Language/English.anarchy_time_control_editor-aux2.aul2"
     source = "i18n/English.aul2"
