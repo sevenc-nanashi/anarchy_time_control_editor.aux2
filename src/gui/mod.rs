@@ -236,7 +236,9 @@ impl eframe::App for TimeControlEditorApp {
                 if matches!(self.timecontrol, CurrentSelectionState::NotSelected) {
                     egui::CentralPanel::default().show(ui, |ui| {
                         ui.centered_and_justified(|ui| {
-                            ui.label("編集するトラックを選択してください");
+                            ui.label(aviutl2::config::translate(
+                                "編集するトラックを選択してください",
+                            ));
                         });
                     });
                 } else {
@@ -248,14 +250,41 @@ impl eframe::App for TimeControlEditorApp {
             CurrentSelectionState::NoTracks => {
                 egui::CentralPanel::default().show(ui, |ui| {
                     ui.centered_and_justified(|ui| {
-                        ui.label("オブジェクトに時間制御があるトラックが存在しません");
+                        ui.label(aviutl2::config::translate(
+                            "オブジェクトに時間制御があるトラックが存在しません",
+                        ));
                     });
                 });
             }
             CurrentSelectionState::None => {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    ui.centered_and_justified(|ui| {
-                        ui.label("オブジェクトを選択してください");
+                    ui.label(aviutl2::config::translate("オブジェクトを選択してください"));
+                    ui.separator();
+
+                    ui.horizontal_wrapped(|ui| {
+                        ui.hyperlink_to(
+                            egui::RichText::new("anarchy_time_control_editor.aux2").size(20.0),
+                            "https://github.com/sevenc-nanashi/anarchy_time_control_editor.aux2",
+                        );
+                        ui.label(format!("v{}", env!("CARGO_PKG_VERSION")));
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.label("developed by ");
+                        ui.hyperlink_to(
+                            egui::RichText::new("Nanashi.")
+                                .color(egui::Color32::from_rgb(0x48, 0xb0, 0xd5)),
+                            "https://sevenc7c.com",
+                        );
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.label("powered by ");
+                        ui.hyperlink_to(
+                            egui::RichText::new("aviutl2-rs")
+                                .color(egui::Color32::from_rgb(0xf8, 0x52, 0x07)),
+                            "https://github.com/sevenc-nanashi/aviutl2-rs",
+                        );
                     });
                 });
             }
@@ -267,6 +296,17 @@ impl TimeControlEditorApp {
     fn track_group_label(track_names: &[String]) -> String {
         assert!(!track_names.is_empty(), "Track group must not be empty");
         track_names.join(", ")
+    }
+
+    fn translated_track_group_label(effect_name: &str, track_names: &[String]) -> String {
+        assert!(!track_names.is_empty(), "Track group must not be empty");
+        track_names
+            .iter()
+            .map(|track_name| {
+                crate::utils::get_translated_effect_param_name(effect_name, track_name)
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     fn selection_state_for_info(
@@ -363,12 +403,23 @@ impl TimeControlEditorApp {
                             info.effects
                                 .iter()
                                 .find(|effect| effect.handle == state.effect_handle)
-                                .map(|effect| effect.name.clone())
-                                .unwrap_or_else(|| "Unknown Effect".to_string()),
-                            Self::track_group_label(&state.track_name)
+                                .map(|effect| {
+                                    crate::utils::get_translated_effect_name(&effect.name)
+                                })
+                                .unwrap_or_else(|| "?".to_string()),
+                            info.effects
+                                .iter()
+                                .find(|effect| effect.handle == state.effect_handle)
+                                .map(|effect| {
+                                    Self::translated_track_group_label(
+                                        &effect.name,
+                                        &state.track_name,
+                                    )
+                                })
+                                .unwrap_or_else(|| Self::track_group_label(&state.track_name))
                         )
                     }
-                    CurrentSelectionState::NotSelected => "Select a track".to_string(),
+                    CurrentSelectionState::NotSelected => "-".to_string(),
                     CurrentSelectionState::NoTracks | CurrentSelectionState::None => unreachable!(),
                 })
                 .show_ui(ui, |ui| {
@@ -376,16 +427,24 @@ impl TimeControlEditorApp {
                     egui::containers::ScrollArea::vertical().show(ui, |ui| {
                         for effect in &info.effects {
                             ui.add_enabled_ui(!effect.tracks.is_empty(), |ui| {
-                                egui::menu::SubMenuButton::new(&effect.name).ui(ui, |ui| {
+                                egui::menu::SubMenuButton::new(
+                                    crate::utils::get_translated_effect_name(&effect.name),
+                                )
+                                .ui(ui, |ui| {
                                     egui::containers::ScrollArea::vertical().show(ui, |ui| {
                                         egui::menu::menu_style(ui.style_mut());
                                         for track in &effect.tracks {
                                             if ui
-                                                .button(Self::track_group_label(&track.track_name))
+                                                .button(Self::translated_track_group_label(
+                                                    &effect.name,
+                                                    &track.track_name,
+                                                ))
                                                 .on_hover_text(if track.curve.is_some() {
-                                                    "時間制御トラックを編集する"
+                                                    aviutl2::config::translate("時間制御を編集する")
                                                 } else {
-                                                    "時間制御トラックが存在しません"
+                                                    aviutl2::config::translate(
+                                                        "移動方法を変更して編集",
+                                                    )
                                                 })
                                                 .clicked()
                                             {

@@ -131,6 +131,20 @@ pub(crate) fn read_object_effects_info(
     })
 }
 
+pub static DEFAULT_CURVE_SCRIPT: std::sync::LazyLock<&'static str> =
+    std::sync::LazyLock::new(|| {
+        if crate::EDIT_HANDLE
+            .get_modules()
+            .iter()
+            .find(|m| m.name == "区間ごとに時間制御@Basic_S")
+            .is_some()
+        {
+            "区間ごとに時間制御@Basic_S"
+        } else {
+            "直線移動(時間制御)"
+        }
+    });
+
 pub fn write_curve_to_track(
     edit: &aviutl2::generic::EditSection,
     effect_handle: aviutl2::generic::EffectHandle,
@@ -142,20 +156,6 @@ pub fn write_curve_to_track(
     let Some((primary_track_name, other_track_names)) = track_names.split_first() else {
         unreachable!("Track group must not be empty");
     };
-
-    static DEFAULT_CURVE_SCRIPT: std::sync::LazyLock<&'static str> =
-        std::sync::LazyLock::new(|| {
-            if crate::EDIT_HANDLE
-                .get_modules()
-                .iter()
-                .find(|m| m.name == "区間ごとに時間制御@Basic_S")
-                .is_some()
-            {
-                "区間ごとに時間制御@Basic_S"
-            } else {
-                "直線移動(時間制御)"
-            }
-        });
 
     let current_value = effect.get_item_value(primary_track_name)?;
     let track_info = effect.get_track_info(primary_track_name)?;

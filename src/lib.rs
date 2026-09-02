@@ -5,6 +5,7 @@ static EDIT_HANDLE: aviutl2::generic::GlobalEditHandle = aviutl2::generic::Globa
 mod curve;
 mod curve_io;
 mod gui;
+mod utils;
 mod watcher;
 
 #[aviutl2::plugin(GenericPlugin)]

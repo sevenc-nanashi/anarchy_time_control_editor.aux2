@@ -1,0 +1,25 @@
+[Language]
+Information=anarchy_time_control_editor.aux2 (English) - https://github.com/sevenc-nanashi/anarchy_time_control_editor.aux2
+
+[anarchy_time_control_editor.aux2]
+編集するトラックを選択してください=Select a track to edit.
+オブジェクトに時間制御があるトラックが存在しません=This object has no tracks that support time control.
+オブジェクトを選択してください=Select an object.
+時間制御を編集する=Edit time control
+移動方法を変更して編集=Change the movement method and edit
+コピー=Copy
+貼り付け=Paste
+中継点追加=Add Point
+自動スクロール=Auto Scroll
+中継点削除=Remove Point
+区間方式=Segment Mode
+ベジェ=Bezier
+Elastic=Elastic
+Bounce=Bounce
+反転=Reverse
+ハンドル連動=Link Handles
+ハンドル分離=Separate Handles
+ハンドルリセット=Reset Handles
+
+[Tips.anarchy_time_control_editor.aux2]
+effect.name=Freely edit track-bar time controls.\nOpen the editor from "anarchy_time_control_editor.aux2" under "View".

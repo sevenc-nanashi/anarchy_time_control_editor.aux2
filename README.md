@@ -1,5 +1,7 @@
 # anarchy_time_control_editor.aux2
 
-TODO: ちゃんと説明を書く
+時間制御を悪用し、ハンドル分離やElastic・Bounceを標準の時間制御にいれるプラグイン。
 
-無法時間制御で驚かせましょう！
+## ライセンス
+
+[MIT License](./LICENSE)で公開しています。

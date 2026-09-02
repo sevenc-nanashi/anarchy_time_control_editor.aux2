@@ -9,7 +9,7 @@ project {
 
 development {
   aviutl2_version = "latest"
-  catalog_dependencies = List("KuroNeko.CopyAlias", "sigma-axis.Basic_S")
+  catalog_dependencies = List("KuroNeko.CopyAlias", "sigma-axis.Basic_S", "aviutl2-community.aviutl2_community_translation_companion")
 }
 
 release {
