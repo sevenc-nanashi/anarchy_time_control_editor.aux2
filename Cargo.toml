@@ -8,8 +8,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = "1.0.104"
-aviutl2 = "0.45.0"
-aviutl2-eframe = "0.45.0"
+aviutl2 = "0.46.1"
+aviutl2-eframe = "0.46.1"
 aviutl2_track_parser = { git = "https://github.com/sevenc-nanashi/aviutl2_track_parser", version = "0.1.0" }
 tap = "1.0.1"
 tracing = "0.1.44"

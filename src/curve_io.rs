@@ -87,7 +87,7 @@ pub(crate) fn read_object_effects_info(
 
             let track_names =
                 match crate::EDIT_HANDLE.get_effect_item_group_names(&effect_name, &track.name)? {
-                    Some(track_names) if track_info.is_none_or(|t| t.group_num > 1) => track_names,
+                    Some(track_names) if track_info.group_num > 1 => track_names,
                     _ => vec![track.name],
                 };
             assert!(!track_names.is_empty(), "Track group must not be empty");
@@ -199,11 +199,11 @@ pub fn write_curve_to_track(
 fn parse_curve_from_track(
     points: &[aviutl2_track_parser::TimeControlPoint],
 ) -> anyhow::Result<crate::curve::TimeControl> {
-    if let Some(curve) = load_customized_curve_from_points(&points)? {
+    if let Some(curve) = load_customized_curve_from_points(points)? {
         return Ok(curve);
     }
 
-    load_regular_curve_from_points(&points)
+    load_regular_curve_from_points(points)
 }
 
 fn load_regular_curve_from_points(
@@ -1293,9 +1293,8 @@ mod tests {
             )],
         };
 
-        let error = serialize_curve_to_points(&curve)
-            .err()
-            .expect("inconsistent curve must be rejected");
+        let error =
+            serialize_curve_to_points(&curve).expect_err("inconsistent curve must be rejected");
 
         assert!(error.to_string().contains("inconsistent"));
     }
