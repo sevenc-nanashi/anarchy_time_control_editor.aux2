@@ -15,6 +15,12 @@ static GLOBAL_EDITOR_GUI_CONTEXT: std::sync::LazyLock<
     std::sync::Mutex<Option<GlobalEditorGuiContext>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 
+pub fn request_repaint() {
+    if let Some(context) = GLOBAL_EDITOR_GUI_CONTEXT.lock().unwrap().as_ref() {
+        context.egui_ctx.request_repaint();
+    }
+}
+
 pub fn update_object_effects_info(info: Option<crate::curve_io::ObjectEffectsInfo>) {
     if let Some(context) = GLOBAL_EDITOR_GUI_CONTEXT.lock().unwrap().as_ref() {
         if let Err(e) = context.object_effects_info_sender.send(info) {

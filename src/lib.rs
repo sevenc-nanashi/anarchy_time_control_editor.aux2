@@ -1,6 +1,11 @@
 use aviutl2::tracing;
 
 static EDIT_HANDLE: aviutl2::generic::GlobalEditHandle = aviutl2::generic::GlobalEditHandle::new();
+static EFFECT_ITEMS_CACHE: std::sync::LazyLock<
+    std::sync::Mutex<
+        std::collections::HashMap<String, std::sync::Arc<[aviutl2::generic::EffectItemInfo]>>,
+    >,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 mod curve;
 mod curve_io;
@@ -65,6 +70,19 @@ impl aviutl2::generic::GenericPlugin for JailbrokenTimeControlEditorAux2 {
         }
     }
 
+    fn on_project_load(&mut self, _project: &mut aviutl2::generic::ProjectFile) {
+        EFFECT_ITEMS_CACHE.lock().unwrap().clear();
+    }
+
+    fn on_clear_cache(&mut self, _edit: &aviutl2::generic::EditSection) {
+        EFFECT_ITEMS_CACHE.lock().unwrap().clear();
+        self.watcher.notify_object_change();
+    }
+
+    fn event_reload_language(&mut self) {
+        gui::request_repaint();
+    }
+
     fn event_change_scene_info(&mut self) {
         self.watcher.notify_object_change();
     }
@@ -76,6 +94,21 @@ impl aviutl2::generic::GenericPlugin for JailbrokenTimeControlEditorAux2 {
     fn event_change_focus_object(&mut self) {
         self.watcher.notify_object_selected();
     }
+}
+
+fn get_effect_items(
+    effect_name: &str,
+) -> anyhow::Result<std::sync::Arc<[aviutl2::generic::EffectItemInfo]>> {
+    let cached = EFFECT_ITEMS_CACHE.lock().unwrap().get(effect_name).cloned();
+    if let Some(items) = cached {
+        return Ok(items);
+    }
+    let items: std::sync::Arc<[_]> = EDIT_HANDLE.get_effect_items(effect_name)?.into();
+    EFFECT_ITEMS_CACHE
+        .lock()
+        .unwrap()
+        .insert(effect_name.to_string(), items.clone());
+    Ok(items)
 }
 
 aviutl2::register_generic_plugin!(JailbrokenTimeControlEditorAux2);

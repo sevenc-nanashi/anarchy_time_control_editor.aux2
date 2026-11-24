@@ -74,10 +74,10 @@ pub(crate) fn read_object_effects_info(
     for effect in effects {
         let effect = read.effect(effect);
         let effect_name = effect.get_name()?;
-        let tracks = crate::EDIT_HANDLE.get_effect_items(&effect_name)?;
+        let tracks = crate::get_effect_items(&effect_name)?;
         let mut tracks_info = Vec::new();
         let mut registered_track_names = std::collections::HashSet::new();
-        for track in tracks {
+        for track in tracks.iter() {
             if registered_track_names.contains(&track.name) {
                 continue;
             }
@@ -88,7 +88,7 @@ pub(crate) fn read_object_effects_info(
             let track_names =
                 match crate::EDIT_HANDLE.get_effect_item_group_names(&effect_name, &track.name)? {
                     Some(track_names) if track_info.group_num > 1 => track_names,
-                    _ => vec![track.name],
+                    _ => vec![track.name.clone()],
                 };
             assert!(!track_names.is_empty(), "Track group must not be empty");
             registered_track_names.extend(track_names.iter().cloned());
